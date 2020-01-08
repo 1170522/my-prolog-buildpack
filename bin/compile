@@ -1,0 +1,67 @@
+#!/bin/bash
+
+##
+# usage: bin/compile <build-dir> <cache-dir>
+
+set -e
+BIN_DIR=$(cd $(dirname $0); pwd) # absolute path
+OPT_DIR=$(cd "$BIN_DIR/../opt"; pwd)
+bpdir=$(cd $(dirname $(dirname $0)); pwd)
+mkdir -p "$1" "$2"
+build=$(cd "$1/" && pwd)
+test -z ${build} && exit
+cache=$(cd "$2/" && pwd)
+test -z ${cache} && exit
+if [ -f ${build}/.preferred_swi_version ]; then
+    SWI_VERSION=$(cat ${build}/.preferred_swi_version)
+    SWI_BRANCH="V${SWI_VERSION}"
+else
+    SWI_VERSION="7.7.13"
+    SWI_BRANCH="V7.7.13"
+fi
+ID=${SWI_BRANCH}
+tarball=${ID}.tgz
+PROFILE=${HOME}/.profile.d
+
+# If we have a copy of the build environment already, just use that!
+echo "------> Checking for precompiled Prolog build"
+if [ -f ${OPT_DIR}/env-${SWI_VERSION}.tar.bz2 ]; then
+    echo "------> Found precompiled Prolog build!"
+    cd /app
+    tar -xjf ${OPT_DIR}/env-${SWI_VERSION}.tar.bz2
+else
+    echo "Cannot compile with ${SWI_VERSION} as we do not have enough time to compile it and a pre-built version is not available"
+    exit 1
+fi
+    
+PATH=${cache}/.local/bin:$PATH
+export PATH
+
+echo "-----> Compiling slug"
+cd $build
+swipl="/app/.local/bin/swipl"
+arch=$(${swipl} --arch)
+cp -r /app/.local ${build}/
+# Configure unixodbc
+echo "-----> Configuring unixodbc for PostgreSQL support"
+cat << 'EOF' > ${build}/.local/etc/odbcinst.ini
+[ODBC Drivers]
+PostgreSQL = Installed
+
+[PostgreSQL]
+Driver = /app/.local/lib/psqlodbcw.so
+Debug = 0
+
+EOF
+
+PATH=$PATH:/app/.local/bin
+cp ${OPT_DIR}/heroku.pl .
+SOURCES="heroku.pl $(cat ${build}/swipl.manifest)"
+if [[ "z${SOURCES}" == "z" ]]; then
+    echo "------> Compiling all .pl files in root directory"
+    SOURCES="*.pl"
+fi
+
+/app/.local/bin/swipl -q -o ${build}/swipl-heroku -g heroku -t prolog --stand_alone=true -c ${SOURCES}
+echo "-----> Build succeeded"
+
